@@ -1,0 +1,73 @@
+name: CI and simulated deployment
+
+on:
+  push:
+    branches: [main, ci-setup]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: djangoauth
+          POSTGRES_USER: djangoauth
+          POSTGRES_PASSWORD: djangoauth
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U djangoauth -d djangoauth"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://djangoauth:djangoauth@localhost:5432/djangoauth
+      SECRET_KEY: ci-only-secret-key
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Django tests
+        run: python manage.py test
+
+  build-image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image archive
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: djangoauth-crud:latest
+          outputs: type=docker,dest=/tmp/djangoauth-crud.tar
+
+      - name: Upload image as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: djangoauth-crud-image
+          path: /tmp/djangoauth-crud.tar
+          if-no-files-found: error
+          retention-days: 30
